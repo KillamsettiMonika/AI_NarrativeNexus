@@ -1,12 +1,12 @@
 
-# 📖 AI Narrative Nexus — Dynamic Text Analysis Platform
+#  AI Narrative Nexus — Dynamic Text Analysis Platform
 
-## 🌟 Overview
+##  Overview
 AI Narrative Nexus is a dynamic text analysis platform that ingests diverse text (articles, reports, social posts), extracts key themes and sentiment, and turns them into concise summaries and **actionable insights**. The goal is to **save time, enhance decision-making, and drive measurable outcomes**.
 
 ---
 
-## 🎯 Goals & Objectives
+##  Goals & Objectives
 - Accept multiple input formats (.txt, .csv, .docx, etc.)
 - Robust preprocessing (cleaning, normalization, tokenization)
 - Topic modeling (LDA/NMF) and sentiment analysis
@@ -16,7 +16,7 @@ AI Narrative Nexus is a dynamic text analysis platform that ingests diverse text
 
 ---
 
-## 🧭 Methodology (High-Level)
+##  Methodology (High-Level)
 1. **Data Collection & Input Handling**  
    Upload UI with validation for supported file types and sizes.
 2. **Preprocessing**  
@@ -33,7 +33,7 @@ AI Narrative Nexus is a dynamic text analysis platform that ingests diverse text
 
 ---
 
-## 🧠 Actionable Insights for Decision-Making
+##  Actionable Insights for Decision-Making
 Use these outputs to steer priorities and next steps:
 
 - **Impact-Weighted Themes:** Rank topics by frequency × sentiment intensity to spotlight what matters most now.  
@@ -46,12 +46,12 @@ Use these outputs to steer priorities and next steps:
 
 ---
 
-## 🗺️ Architecture (Conceptual)
+## 🗺 Architecture (Conceptual)
 Input ➜ Preprocess ➜ Topic Modeling + Sentiment ➜ Summarization ➜ Insights & Recommendations ➜ Dashboards/Reports
 
 ---
 
-## ⏳ 8-Week Roadmap (Milestones)
+##  8-Week Roadmap (Milestones)
 - **W1:** Data ingestion & upload UI, validation, sample tests  
 - **W2:** Preprocessing pipeline (clean, normalize, tokenize)  
 - **W3:** Topic modeling (LDA/NMF), coherence tuning  
@@ -63,7 +63,7 @@ Input ➜ Preprocess ➜ Topic Modeling + Sentiment ➜ Summarization ➜ Insigh
 ---
 
 
-## 📂 Suggested Project Structure
+##  Suggested Project Structure
 ```bash
 ai-narrative-nexus/
 ├─ app.py

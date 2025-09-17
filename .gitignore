@@ -1,35 +1,8 @@
-# Python cache
-__pycache__/
-*.py[cod]
-*$py.class
 
 # Virtual environment
 venv/
 .env
 .env.*
 
-# IDE/editor settings
-.vscode/
-.idea/
 
-# OS generated files
-.DS_Store
-Thumbs.db
 
-# Logs
-*.log
-
-# Jupyter Notebook checkpoints
-.ipynb_checkpoints/
-
-# Dataset files (keep them local, not in repo)
-# *.csv
-# *.json
-# *.xlsx
-
-# Compiled
-*.so
-*.dll
-*.exe
-*.out
-*.obj

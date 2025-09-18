@@ -1,8 +1,14 @@
-
-# Virtual environment
+# Ignore virtual environment
 venv/
-.env
-.env.*
 
+# Ignore datasets (too large for GitHub)
+datasets/
+*.csv
 
+# Ignore Python cache
+__pycache__/
+*.pyc
 
+# Ignore model checkpoints if too large
+*.pkl
+!models/*.pkl   # except models you save in models/

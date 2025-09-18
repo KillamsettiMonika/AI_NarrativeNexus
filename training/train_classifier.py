@@ -1,76 +1,91 @@
+# training/train_classifier.py
+
 import os
 import pandas as pd
 import nltk
-from sklearn.model_selection import train_test_split
-from sklearn.feature_extraction.text import TfidfVectorizer
-from sklearn.pipeline import Pipeline
-from sklearn.linear_model import LogisticRegression
-from sklearn.metrics import classification_report, accuracy_score
 import joblib
+import matplotlib.pyplot as plt
+import seaborn as sns
 
-# Ensure nltk data is available
+from sklearn.feature_extraction.text import TfidfVectorizer
+from sklearn.linear_model import LogisticRegression
+from sklearn.pipeline import Pipeline
+from sklearn.model_selection import train_test_split
+from sklearn.metrics import classification_report, confusion_matrix
+
+# Ensure NLTK data
 nltk.download("punkt")
 nltk.download("stopwords")
 nltk.download("wordnet")
 nltk.download("punkt_tab")
 
-from pre_processing.text_processing import nlp_preprocess
-
-# Paths
 INPUT_CSV = "cleaned_dataset.csv"
-MODEL_DIR = "models"
-MODEL_PATH = os.path.join(MODEL_DIR, "text_classifier.pkl")
+MODEL_PATH = os.path.join("models", "text_classifier.pkl")
+CONF_MATRIX_PATH = os.path.join("models", "confusion_matrix.png")
 
+# ===================
+# 1. Load Dataset
+# ===================
+print(f"📂 Loading dataset: {INPUT_CSV}")
+df = pd.read_csv(INPUT_CSV)
 
-def build_pipeline():
-    """Builds the ML pipeline with TF-IDF + Logistic Regression."""
-    pipeline = Pipeline([
-        ("tfidf", TfidfVectorizer(max_features=5000)),
-        ("clf", LogisticRegression(max_iter=1000)),
-    ])
-    return pipeline
+# 🚨 FIX: Drop rows with missing or empty text
+df = df.dropna(subset=["clean_text"])
+df = df[df["clean_text"].str.strip() != ""]
 
+# Drop categories with <2 samples
+df = df.groupby("category").filter(lambda x: len(x) > 1)
 
-def train_and_save(X, y):
-    """Train classifier and save model."""
-    X_train, X_test, y_train, y_test = train_test_split(
-        X, y, test_size=0.2, random_state=42, stratify=y
-    )
+X = df["clean_text"]
+y = df["category"]
 
-    print("Training pipeline...")
-    pipeline = build_pipeline()
-    pipeline.fit(X_train, y_train)
+print(f"📊 Dataset after cleaning: {len(df)} rows, {y.nunique()} categories")
 
-    # Evaluate
-    y_pred = pipeline.predict(X_test)
-    print("\n📊 Classification Report:")
-    print(classification_report(y_test, y_pred))
-    print(f"✅ Accuracy: {accuracy_score(y_test, y_pred):.4f}")
+# ===================
+# 2. Train-Test Split
+# ===================
+X_train, X_test, y_train, y_test = train_test_split(
+    X, y, test_size=0.2, random_state=42, stratify=y
+)
 
-    # Save model
-    os.makedirs(MODEL_DIR, exist_ok=True)
-    joblib.dump(pipeline, MODEL_PATH)
-    print(f"💾 Model saved to {MODEL_PATH}")
+# ===================
+# 3. Pipeline
+# ===================
+pipeline = Pipeline([
+    ("tfidf", TfidfVectorizer(max_features=5000)),
+    ("clf", LogisticRegression(max_iter=1000))
+])
 
+print("Training pipeline...")
+pipeline.fit(X_train, y_train)
 
-if __name__ == "__main__":
-    print(f"📂 Loading dataset: {INPUT_CSV}")
-    df = pd.read_csv(INPUT_CSV)
+# ===================
+# 4. Evaluation
+# ===================
+y_pred = pipeline.predict(X_test)
 
-    # Ensure required columns
-    if "clean_text" not in df.columns or "category" not in df.columns:
-        raise ValueError("CSV must have columns: clean_text, category")
+print("\n📊 Classification Report:")
+print(classification_report(y_test, y_pred))
 
-    # ⚠️ Drop rows with missing/empty text or category
-    df = df.dropna(subset=["clean_text", "category"])
-    df = df[df["clean_text"].str.strip() != ""]
+# Confusion Matrix
+cm = confusion_matrix(y_test, y_pred, labels=pipeline.classes_)
+plt.figure(figsize=(14, 10))
+sns.heatmap(cm, annot=False, cmap="Blues",
+            xticklabels=pipeline.classes_, yticklabels=pipeline.classes_)
+plt.xlabel("Predicted")
+plt.ylabel("True")
+plt.title("Confusion Matrix")
+plt.xticks(rotation=90)
+plt.yticks(rotation=0)
+plt.tight_layout()
+plt.savefig(CONF_MATRIX_PATH)
+plt.close()
 
-    # ⚠️ Remove categories with <2 samples (required for stratify)
-    df = df.groupby("category").filter(lambda x: len(x) > 1)
+print(f"✅ Confusion matrix saved to {CONF_MATRIX_PATH}")
 
-    print(f"📊 Dataset after cleaning: {len(df)} rows, {df['category'].nunique()} categories")
-
-    X = df["clean_text"]
-    y = df["category"]
-
-    train_and_save(X, y)
+# ===================
+# 5. Save Model
+# ===================
+os.makedirs("models", exist_ok=True)
+joblib.dump(pipeline, MODEL_PATH)
+print(f"💾 Model saved to {MODEL_PATH}")

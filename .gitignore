@@ -1,6 +1,6 @@
 # Ignore virtual environment
 venv/
-
+.env
 # Ignore datasets (too large for GitHub)
 datasets/
 *.csv

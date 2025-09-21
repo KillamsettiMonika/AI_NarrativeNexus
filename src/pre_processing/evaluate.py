@@ -5,40 +5,43 @@ import seaborn as sns
 from sklearn.metrics import classification_report, confusion_matrix
 from sklearn.model_selection import train_test_split
 
-# 1. Load dataset (use cleaned data)
-DATASET_PATH = "cleaned_dataset.csv"
+# Paths
+DATASET_PATH = "cleaned_dataset.csv"   # path relative to project root
 MODEL_PATH = "models/text_classifier.pkl"
 
 print(f"📂 Loading dataset: {DATASET_PATH}")
 df = pd.read_csv(DATASET_PATH)
 
-# Drop rows with missing values
-df = df.dropna(subset=["clean_text", "category"])
+# Drop missing rows
+df = df.dropna(subset=["text", "category"])
 
-X = df["clean_text"]
+X = df["text"]
 y = df["category"]
 
-# Train/test split (same as training)
+# Split (same as in training)
 X_train, X_test, y_train, y_test = train_test_split(
     X, y, test_size=0.2, random_state=42, stratify=y
 )
 
-# 2. Load trained model
+# Load model
 print(f"💾 Loading model: {MODEL_PATH}")
 model = joblib.load(MODEL_PATH)
 
-# 3. Evaluate model
+# Predictions
 print("📊 Evaluating model...")
 y_pred = model.predict(X_test)
 
+# Classification report
 print("\nClassification Report:\n")
 print(classification_report(y_test, y_pred))
 
-# 4. Plot confusion matrix
+# Confusion Matrix
 cm = confusion_matrix(y_test, y_pred, labels=model.classes_)
 
 plt.figure(figsize=(14, 10))
-sns.heatmap(cm, annot=False, cmap="Blues", xticklabels=model.classes_, yticklabels=model.classes_)
+sns.heatmap(cm, annot=False, cmap="Blues",
+            xticklabels=model.classes_,
+            yticklabels=model.classes_)
 plt.xlabel("Predicted")
 plt.ylabel("Actual")
 plt.title("Confusion Matrix")

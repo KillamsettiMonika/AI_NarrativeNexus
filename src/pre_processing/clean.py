@@ -1,33 +1,60 @@
-import os
 import pandas as pd
-import csv
-from pre_processing.text_processing import nlp_preprocess
+import re
 
-# Input & Output paths
-INPUT_CSV = os.path.join("20news_18828_final_2000.csv")
-OUTPUT_CSV = os.path.join("cleaned_dataset.csv")
 
-def clean_dataset(input_csv, output_csv):
-    print(f"📂 Loading dataset: {os.path.abspath(input_csv)}")
-    df = pd.read_csv(input_csv)
+def clean_body_classification(raw_text: str) -> str:
+    """
+    Clean raw text for classification.
+    Removes headers, quotes, signatures, metadata, and normalizes text.
+    """
+    if not raw_text or pd.isna(raw_text):
+        return ""
 
-    print("🧹 Applying text preprocessing...")
-    df["clean_text"] = df["text"].astype(str).apply(nlp_preprocess)
+    # Drop quoted lines and reply boilerplate
+    cleaned_lines = []
+    for line in raw_text.splitlines():
+        if line.strip().startswith((">", "|")):
+            continue
+        if re.search(r"(writes:|wrote:|In article\s*<.*?>)", line, re.I):
+            continue
+        cleaned_lines.append(line)
 
-    # 🔑 Fix: Replace line breaks inside text with a space
-    df["clean_text"] = df["clean_text"].str.replace(r"\r?\n", " ", regex=True)
-    df["text"] = df["text"].astype(str).str.replace(r"\r?\n", " ", regex=True)
+    body = "\n".join(cleaned_lines)
 
-    # Save with quotes around all fields (Excel-safe)
-    df.to_csv(
-        output_csv,
-        index=False,
-        encoding="utf-8",
-        quoting=csv.QUOTE_ALL
-    )
+    # Remove emails, urls, html tags, numbers, and special chars
+    body = re.sub(r"\b\S+@\S+\b", " ", body)
+    body = re.sub(r"http\S+|www\.\S+", " ", body)
+    body = re.sub(r"<[^>]+>", " ", body)
+    body = re.sub(r"\d+", " ", body)
+    body = re.sub(r"[^a-zA-Z\s]", " ", body)
 
-    print(f"✅ Cleaned dataset saved: {os.path.abspath(output_csv)}")
-    print(df.head())
+    # Normalize spacing
+    body = re.sub(r"\s{2,}", " ", body)
 
+    return body.lower().strip()
+
+
+# --- MAIN SCRIPT ---
 if __name__ == "__main__":
-    clean_dataset(INPUT_CSV, OUTPUT_CSV)
+    input_file = "20news_18828_final_2000.csv"
+    output_file = "cleaned_dataset.csv"
+
+    print(f"📂 Loading dataset: {input_file}")
+    df = pd.read_csv(input_file)
+
+    # Expect columns: ["filename", "category", "text"] or ["category", "text"]
+    if "text" not in df.columns:
+        raise ValueError("❌ Input CSV must have a 'text' column!")
+
+    print("✨ Cleaning text...")
+    df["text"] = df["text"].map(clean_body_classification)
+
+    # Drop empty rows
+    df = df[df["text"].str.strip().astype(bool)]
+
+    # Drop categories with <2 samples
+    df = df.groupby("category").filter(lambda x: len(x) > 1)
+
+    df.to_csv(output_file, index=False, encoding="utf-8")
+    print(f"✅ Saved cleaned dataset: {output_file}")
+    print(f"   Rows: {len(df)}, Categories: {df['category'].nunique()}")

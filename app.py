@@ -7,6 +7,8 @@ import streamlit as st
 from dotenv import load_dotenv
 from datetime import datetime, timezone
 import praw
+import joblib
+from src.pre_processing.text_processing import preprocess_series   # ✅ FIXED import
 
 # ==============================
 # Setup
@@ -30,6 +32,13 @@ reddit = praw.Reddit(
     client_secret=REDDIT_CLIENT_SECRET,
     user_agent=REDDIT_USER_AGENT
 )
+
+# Load classifier model
+@st.cache_resource
+def load_model():
+    return joblib.load("models/text_classifier.pkl")
+
+model = load_model()
 
 # ==============================
 # Functions
@@ -103,16 +112,24 @@ def save_data(new_records):
     return f"✅ Data saved to {DATA_FILE_JSON} and {DATA_FILE_CSV}"
 
 
+def classify_text(text: str) -> str:
+    """Classify text using trained model"""
+    if not text.strip():
+        return "⚠️ No text to classify!"
+    cleaned = preprocess_series([text])
+    return model.predict(cleaned)[0]
+
+
 # ==============================
 # Streamlit UI
 # ==============================
-st.title("📌 NarrativeNexus Data Collector")
-st.write("Paste a Reddit post link or News query. Data will be collected and stored in `data/` folder.")
+st.title("📌 NarrativeNexus – Data Collector + Classifier")
+st.write("Paste a Reddit link, News query, or Free text. Data will be collected, stored, and classified.")
 
-option = st.radio("Choose Source:", ["Reddit Post", "News Article"])
-user_input = st.text_input("Enter Reddit link or News query:")
+option = st.radio("Choose Source:", ["Reddit Post", "News Article", "Free Text"])
+user_input = st.text_input("Enter Reddit link / News query / Free text:")
 
-if st.button("Fetch & Save"):
+if st.button("Fetch, Save & Classify"):
     records = []
     try:
         if option == "Reddit Post":
@@ -124,10 +141,29 @@ if st.button("Fetch & Save"):
                 records.append(record)
             else:
                 st.error("❌ No news found for this query.")
+        elif option == "Free Text":
+            record = {
+                "id": str(uuid.uuid4()),
+                "source": "manual",
+                "author": "user",
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "text": user_input,
+                "metadata": {"language": "en", "likes": None, "rating": None, "url": None}
+            }
+            records.append(record)
 
         if records:
             message = save_data(records)
             st.success(message)
+
+            # Classification
+            text_content = records[0]["text"]
+            predicted_category = classify_text(text_content)
+
+            st.subheader("Predicted Category")
+            st.success(f"👉 {predicted_category}")
+
+            # Preview
             st.subheader("Preview")
             st.json(records[0])
 

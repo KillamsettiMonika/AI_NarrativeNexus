@@ -12,4 +12,5 @@ __pycache__/
 
 # Ignore model checkpoints if too large
 *.pkl
-!models/*.pkl   # except models you save in models/
+*.h5
+

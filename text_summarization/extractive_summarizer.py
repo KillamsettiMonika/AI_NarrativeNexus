@@ -1,41 +1,48 @@
-# text_summarization/extractive_summarizer_bbc.py
+# text_summarization/extractive_summarizer.py
+
 import os
 import pandas as pd
-from sumy.parsers.plaintext import PlaintextParser
-from sumy.nlp.tokenizers import Tokenizer
-from sumy.summarizers.lex_rank import LexRankSummarizer
-import nltk
+from sklearn.feature_extraction.text import TfidfVectorizer
+from sklearn.metrics.pairwise import cosine_similarity
+import networkx as nx
+import pickle
 
-nltk.download("punkt", quiet=True)
+# Create models folder if not exists
+os.makedirs("models", exist_ok=True)
 
-# === Paths ===
-DATASET_PATH = "datasets/BBC articles/bbc-text.csv"  # Change this if needed
-OUTPUT_PATH = "text_summarization/bbc_extractive_summary.csv"
+# Load BBC dataset
+data_path = "datasets/BBC articles/bbc-text.csv"  # adjust to your actual CSV path
+df = pd.read_csv(data_path)
+texts = df["text"].astype(str).tolist()
 
-# === Function ===
-def extractive_summary(text, sentence_count=3):
-    """Generate extractive summary using LexRank"""
-    parser = PlaintextParser.from_string(str(text), Tokenizer("english"))
-    summarizer = LexRankSummarizer()
-    summary = summarizer(parser.document, sentences_count=sentence_count)
-    return " ".join(str(sentence) for sentence in summary)
+# Preprocess
+def clean_text(text):
+    return " ".join(text.split())
 
-def main():
-    if not os.path.exists(DATASET_PATH):
-        print(f"❌ Dataset not found at {DATASET_PATH}")
-        return
+# Build TF-IDF
+vectorizer = TfidfVectorizer(stop_words="english")
+X = vectorizer.fit_transform([clean_text(t) for t in texts])
 
-    df = pd.read_csv(DATASET_PATH)
-    if "text" not in df.columns:
-        print("❌ Expected a column named 'text' in your dataset.")
-        return
+# Build similarity graph
+similarity_matrix = cosine_similarity(X)
+nx_graph = nx.from_numpy_array(similarity_matrix)
+scores = nx.pagerank(nx_graph)
 
-    print(f"📊 Loaded {len(df)} BBC articles.")
-    df["extractive_summary"] = df["text"].apply(lambda x: extractive_summary(x))
+# Select top 5 sentences per document
+summaries = []
+for i, text in enumerate(texts):
+    sentences = text.split(". ")
+    ranked = sorted(((scores.get(j, 0), s) for j, s in enumerate(sentences)), reverse=True)
+    summary = ". ".join([s for _, s in ranked[:3]])
+    summaries.append(summary)
 
-    os.makedirs("text_summarization", exist_ok=True)
-    df.to_csv(OUTPUT_PATH, index=False, encoding="utf-8-sig")
-    print(f"✅ Extractive summaries saved to {OUTPUT_PATH}")
+# Save summaries
+summary_df = pd.DataFrame({"original_text": texts, "summary": summaries})
+summary_df.to_csv("text_summarization/extractive_summaries.csv", index=False)
+print("✅ Extractive summaries saved to text_summarization/extractive_summaries.csv")
 
-if __name__ == "__main__":
-    main()
+# Save model artifacts
+with open("models/extractive_vectorizer.pkl", "wb") as f:
+    pickle.dump(vectorizer, f)
+
+print("✅ Extractive summarization model saved in models/ folder")

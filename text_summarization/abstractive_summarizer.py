@@ -1,12 +1,19 @@
 import os
 import pandas as pd
 import joblib
+import numpy as np
+import evaluate
+import matplotlib.pyplot as plt
 from transformers import pipeline
+from sklearn.metrics import confusion_matrix, ConfusionMatrixDisplay
+from sklearn.feature_extraction.text import TfidfVectorizer
+from sklearn.cluster import KMeans
 
 # ---------- CONFIG ----------
 DATASET_PATH = "datasets/BBC articles/bbc-text.csv"  # adjust if path differs
 OUTPUT_PATH = "text_summarization/abstractive_summary.csv"
 MODEL_PATH = "models/abstractive_model.pkl"
+CONFUSION_MATRIX_PATH = "models/confusion_matrix.png"
 
 # ---------- LOAD DATA ----------
 print("📥 Loading dataset...")
@@ -38,7 +45,7 @@ else:
     summarizer = pipeline(
         "summarization",
         model="facebook/bart-large-cnn",
-        framework="pt"  # force PyTorch backend
+        framework="pt"
     )
     joblib.dump(summarizer, MODEL_PATH)
     print(f"✅ Model saved locally to: {MODEL_PATH}")
@@ -64,4 +71,39 @@ summary_df = pd.DataFrame({
 summary_df.to_csv(OUTPUT_PATH, index=False, encoding="utf-8")
 
 print(f"✅ Summaries saved to: {OUTPUT_PATH}")
-print(f"✅ Model available in: {MODEL_PATH}")
+
+# ---------- EVALUATE MODEL WITH ROUGE ----------
+print("\n📊 Evaluating summarization quality using ROUGE...")
+rouge = evaluate.load("rouge")
+
+references = [text.split('.')[0] for text in df[text_column].astype(str).tolist()[:10]]
+results = rouge.compute(predictions=summaries, references=references)
+
+rouge_scores = {k: np.mean(v) for k, v in results.items()}
+
+print("\n📈 ROUGE Evaluation Results:")
+for metric, score in rouge_scores.items():
+    print(f"  {metric.upper()}: {score:.4f}")
+
+# ---------- CONFUSION MATRIX (Cluster Comparison) ----------
+print("\n🧩 Creating confusion matrix based on text similarity clusters...")
+
+vectorizer = TfidfVectorizer(stop_words='english')
+X_orig = vectorizer.fit_transform(df[text_column].astype(str).tolist()[:10])
+X_sum = vectorizer.transform(summaries)
+
+# cluster original and summarized text
+kmeans_orig = KMeans(n_clusters=3, random_state=42, n_init=10)
+kmeans_sum = KMeans(n_clusters=3, random_state=42, n_init=10)
+orig_labels = kmeans_orig.fit_predict(X_orig)
+sum_labels = kmeans_sum.fit_predict(X_sum)
+
+cm = confusion_matrix(orig_labels, sum_labels)
+disp = ConfusionMatrixDisplay(confusion_matrix=cm)
+disp.plot(cmap='Blues')
+plt.title("Confusion Matrix — Summary vs Original Clusters")
+plt.savefig(CONFUSION_MATRIX_PATH)
+plt.close()
+
+print(f"✅ Confusion Matrix saved at: {CONFUSION_MATRIX_PATH}")
+print("🎯 All tasks completed successfully!")

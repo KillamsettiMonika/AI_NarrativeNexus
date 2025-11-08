@@ -1,124 +1,451 @@
 # app.py
 import os
+import io
 import json
+import uuid
 import joblib
+import requests
+import traceback
 import pandas as pd
+import numpy as np
+from datetime import datetime, timezone
+
 import streamlit as st
 import matplotlib.pyplot as plt
 import seaborn as sns
-from datetime import datetime, timezone
 
-# -------------------------------------------------------------
-# CONFIGURATION
-# -------------------------------------------------------------
-st.set_page_config(page_title="AI Narrative Nexus", layout="wide")
+# optional keras import
+try:
+    from tensorflow.keras.models import load_model as keras_load_model
+    HAS_KERAS = True
+except Exception:
+    HAS_KERAS = False
 
-DATASETS_DIR = "datasets"
+# ---------- CONFIG ----------
+DATA_DIR = "data"
+os.makedirs(DATA_DIR, exist_ok=True)
+DATA_STORE_JSON = os.path.join(DATA_DIR, "data_store.json")
+DATA_STORE_CSV = os.path.join(DATA_DIR, "data_store.csv")
+
 MODELS_DIR = "models"
+DATASETS_DIR = "datasets"
 
-# Confusion matrix paths
-CONFUSION_MATRICES = {
-    "Topic Modeling": [
-        ("LDA", "topicmodelling/topic_modelling/lda_confusion_matrix.png"),
-        ("NMF", "topicmodelling/topic_modelling/nmf_confusion_matrix.png"),
-    ],
-    "Sentiment Analysis": [
-        ("Random Forest", "sentiment_analysis/random_forest1/confusion_matrix_rf.png"),
-        ("LSTM", "sentiment_analysis/lstm/confusion_matrix_lstm.png"),
-    ],
-    "Text Summarization": [
-        ("Abstractive", "sentiment_analysis/text_summarization/abs_confusion_matrix.png"),
-        ("Extractive", "sentiment_analysis/text_summarization/evaluation_metrics.png"),
-    ],
+# Topic models
+LDA_MODEL_PATH = os.path.join(MODELS_DIR, "lda_model.pkl")
+LDA_VECT_PATH  = os.path.join(MODELS_DIR, "lda_vectorizer.pkl")
+NMF_MODEL_PATH = os.path.join(MODELS_DIR, "nmf_model.pkl")
+NMF_VECT_PATH  = os.path.join(MODELS_DIR, "nmf_vectorizer.pkl")
+
+# Sentiment models
+RF_PIPELINE_PATH = os.path.join(MODELS_DIR, "amazon_rf_pipeline.pkl")  # or random_forest_model.pkl
+LSTM_MODEL_PATH  = os.path.join(MODELS_DIR, "amazon_lstm.h5")
+LSTM_TOKENIZER_PATH = os.path.join(MODELS_DIR, "amazon_lstm_tokenizer.pkl")
+
+# Summarization models (pickled pipeline or callable), fallback to simple_textrank
+ABSTRACTIVE_MODEL_PATH = os.path.join(MODELS_DIR, "abstractive_model.pkl")
+EXTRACTIVE_MODEL_PATH = os.path.join(MODELS_DIR, "extractive_vectorizer.pkl")
+
+# Evaluation images (if present)
+EVAL_IMAGES = {
+    "lda": os.path.join(MODELS_DIR, "lda_confusion_matrix.png"),
+    "nmf": os.path.join(MODELS_DIR, "nmf_confusion_matrix.png"),
+    "rf":  os.path.join(MODELS_DIR, "confusion_matrix_rf.png"),
+    "lstm":os.path.join(MODELS_DIR, "confusion_matrix_lstm.png"),
+    "extractive_summarization": os.path.join(MODELS_DIR, "evaluation_metrics.png"),
+    "abstractive_summarization": os.path.join(MODELS_DIR, "abs_confusion_matrix.png"),
 }
 
-# -------------------------------------------------------------
-# SIDEBAR NAVIGATION
-# -------------------------------------------------------------
-st.sidebar.title("🧭 Navigation")
-page = st.sidebar.radio("Go to:", [
-    "Home",
-    "Topic Modeling",
-    "Sentiment Analysis",
-    "Text Summarization",
-    "Data Visualization",
-    "Evaluation & Analysis",
-    "Live Demo",
-    "About"
-])
+NEWS_API_KEY = os.getenv("NEWS_API_KEY", None)
 
-# -------------------------------------------------------------
-# HOME PAGE
-# -------------------------------------------------------------
+# ---------- HELPERS ----------
+def load_json_store(path=DATA_STORE_JSON):
+    if os.path.exists(path):
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except Exception:
+            return []
+    return []
+
+def save_to_store(records, json_path=DATA_STORE_JSON, csv_path=DATA_STORE_CSV):
+    data = load_json_store(json_path)
+    data.extend(records)
+    with open(json_path, "w", encoding="utf-8") as f:
+        json.dump(data, f, indent=2, ensure_ascii=False)
+    df = pd.json_normalize(data)
+    df.to_csv(csv_path, index=False, encoding="utf-8-sig")
+    return len(records)
+
+def safe_read_uploaded(file):
+    name = file.name.lower()
+    try:
+        if name.endswith(".txt"):
+            return file.getvalue().decode("utf-8", errors="ignore")
+        elif name.endswith(".pdf"):
+            try:
+                import PyPDF2
+                reader = PyPDF2.PdfReader(io.BytesIO(file.getvalue()))
+                pages = [p.extract_text() or "" for p in reader.pages]
+                return "\n".join(pages)
+            except Exception:
+                return ""
+        elif name.endswith((".doc", ".docx")):
+            try:
+                import docx
+                doc = docx.Document(io.BytesIO(file.getvalue()))
+                return "\n".join(p.text for p in doc.paragraphs)
+            except Exception:
+                return ""
+        else:
+            return file.getvalue().decode("utf-8", errors="ignore")
+    except Exception:
+        return ""
+
+def simple_summarize(text, max_sentences=3):
+    import re
+    if not text or len(text.split()) < 30:
+        return " ".join(text.splitlines()[:3])
+    sents = re.split(r'(?<=[.!?])\s+', text.strip())
+    words = [w.lower() for w in re.findall(r"\w+", text)]
+    from collections import Counter
+    freq = Counter(words)
+    scores = []
+    for i, s in enumerate(sents):
+        words_in_s = re.findall(r"\w+", s.lower())
+        if not words_in_s:
+            scores.append((0, i, s))
+            continue
+        score = sum(freq[w] for w in words_in_s) / len(words_in_s)
+        scores.append((score, i, s))
+    top = sorted(scores, key=lambda x: x[0], reverse=True)[:max_sentences]
+    top_sorted = sorted(top, key=lambda x: x[1])
+    return " ".join([t[2].strip() for t in top_sorted])
+
+# ---------- MODEL LOADING ----------
+@st.cache_resource
+def load_topic_models():
+    models = {}
+    if os.path.exists(LDA_MODEL_PATH) and os.path.exists(LDA_VECT_PATH):
+        try:
+            models['LDA'] = (joblib.load(LDA_MODEL_PATH), joblib.load(LDA_VECT_PATH))
+        except Exception:
+            pass
+    if os.path.exists(NMF_MODEL_PATH) and os.path.exists(NMF_VECT_PATH):
+        try:
+            models['NMF'] = (joblib.load(NMF_MODEL_PATH), joblib.load(NMF_VECT_PATH))
+        except Exception:
+            pass
+    return models
+
+@st.cache_resource
+def load_sentiment_models():
+    models = {}
+    if os.path.exists(RF_PIPELINE_PATH):
+        try:
+            models['RF'] = joblib.load(RF_PIPELINE_PATH)
+        except Exception:
+            pass
+    if HAS_KERAS and os.path.exists(LSTM_MODEL_PATH) and os.path.exists(LSTM_TOKENIZER_PATH):
+        try:
+            lstm = keras_load_model(LSTM_MODEL_PATH)
+            tokenizer = joblib.load(LSTM_TOKENIZER_PATH)
+            models['LSTM'] = (lstm, tokenizer)
+        except Exception:
+            pass
+    return models
+
+@st.cache_resource
+def load_summarizer_models():
+    s = {}
+    if os.path.exists(ABSTRACTIVE_MODEL_PATH):
+        try:
+            s['Abstractive'] = joblib.load(ABSTRACTIVE_MODEL_PATH)
+        except Exception:
+            s['Abstractive_error'] = str(traceback.format_exc())[:1000]
+    if os.path.exists(EXTRACTIVE_MODEL_PATH):
+        try:
+            s['Extractive'] = joblib.load(EXTRACTIVE_MODEL_PATH)
+        except Exception:
+            s['Extractive_error'] = str(traceback.format_exc())[:1000]
+    return s
+
+topic_models = load_topic_models()
+sentiment_models = load_sentiment_models()
+summarizer_models = load_summarizer_models()
+
+# ---------- PREDICTION HELPERS ----------
+def predict_topic_single(text, model_name):
+    if model_name not in topic_models:
+        return None, "model unavailable"
+    model, vect = topic_models[model_name]
+    X = vect.transform([text])
+    try:
+        doc_topic = model.transform(X)
+        top = doc_topic.argmax(axis=1)[0]
+        # try to produce human friendly text using top words if available
+        top_words = []
+        try:
+            feature_names = vect.get_feature_names_out()
+            if hasattr(model, "components_"):
+                comp = model.components_[top]
+                top_idx = comp.argsort()[::-1][:10]
+                top_words = [feature_names[i] for i in top_idx]
+        except Exception:
+            pass
+        label = f"Topic {top}"
+        if top_words:
+            label = f"Topic {top} — " + ", ".join(top_words[:6])
+        return label, None
+    except Exception as e:
+        return None, str(e)
+
+def predict_sentiment_single(text, model_name):
+    if model_name not in sentiment_models:
+        return None, "model unavailable"
+    if model_name == "LSTM":
+        lstm, tokenizer = sentiment_models['LSTM']
+        from tensorflow.keras.preprocessing.sequence import pad_sequences
+        seq = tokenizer.texts_to_sequences([text])
+        seq = pad_sequences(seq, maxlen=200)
+        p = (lstm.predict(seq) > 0.5).astype(int).flatten()[0]
+        return "positive" if int(p) == 1 else "negative", None
+    else:
+        m = sentiment_models[model_name]
+        try:
+            p = m.predict([text])[0]
+            if isinstance(p, (int, np.integer, float, np.floating)):
+                return "positive" if int(p) == 1 else "negative", None
+            return str(p), None
+        except Exception as e:
+            return None, str(e)
+
+def summarize_text(text, method):
+    if method == "simple_textrank":
+        return simple_summarize(text)
+    if method == "Abstractive":
+        model = summarizer_models.get("Abstractive")
+        if model is None:
+            return None
+        # If model is a huggingface pipeline pickled, it should be callable
+        try:
+            if callable(model):
+                out = model(text, max_length=130, min_length=30, do_sample=False)
+                if isinstance(out, list) and 'summary_text' in out[0]:
+                    return out[0]['summary_text']
+                # fallback if out is a string
+                return out if isinstance(out, str) else str(out)
+            # else maybe model is an object with .summarize
+            if hasattr(model, "summarize"):
+                return model.summarize(text)
+        except Exception:
+            return None
+    if method == "Extractive":
+        model = summarizer_models.get("Extractive")
+        if model is None:
+            return None
+        try:
+            # If vectorizer + extraction pipeline saved, apply transform then simple top-n sentences heuristic
+            if hasattr(model, "transform"):
+                vec = model
+                # fallback: use simple summarizer (extract first 3 sentences)
+                sents = text.split(".")
+                return ". ".join(sents[:3]).strip()
+        except Exception:
+            return None
+    return None
+
+# ---------- UI ----------
+st.set_page_config(page_title="NarrativeNexus", layout="wide")
+st.title("📌 AI Narrative Nexus")
+
+# Sidebar navigation
+pages = [
+    "Home", "Topic Modeling", "Sentiment Analysis", "Text Summarization",
+    "Data Visualization", "Evaluation & Analysis", "Live Demo", "About"
+]
+st.sidebar.markdown("## 🧭 Navigation")
+page = st.sidebar.radio("Go to:", pages, index=0)
+
+# Shared model selection widgets (kept on the relevant pages)
+def input_source_widget(prefix=""):
+    st.markdown("**Select Input Type**")
+    input_type = st.radio("Input source:", ["Free Text", "Reddit URL", "News API"], index=0, key=prefix+"input_type")
+    if input_type == "Free Text":
+        text = st.text_area("Paste the paragraph / article / content to analyze:", height=180, key=prefix+"free_text")
+    elif input_type == "Reddit URL":
+        url = st.text_input("Paste Reddit post URL (will attempt to extract):", key=prefix+"reddit_url")
+        text = None
+        if st.button("Fetch Reddit content", key=prefix+"fetch_reddit"):
+            try:
+                # very simple HTML fetch - works for many reddit pages; not robust
+                res = requests.get(url, headers={"User-Agent": "NarrativeNexus/0.1"})
+                from bs4 import BeautifulSoup
+                soup = BeautifulSoup(res.text, "html.parser")
+                # collect main text from common selectors
+                candidates = soup.find_all(["p"])
+                text = " ".join(p.get_text(" ", strip=True) for p in candidates)
+                st.success("Fetched content (raw). Please scroll down to run model.")
+            except Exception as e:
+                st.error(f"Could not fetch Reddit URL: {e}")
+                text = ""
+    else:  # News API
+        query = st.text_input("Enter News query (or topic):", key=prefix+"news_query")
+        text = None
+        if st.button("Fetch top article", key=prefix+"fetch_news"):
+            if NEWS_API_KEY is None:
+                st.error("No NEWS_API_KEY configured as environment variable.")
+                text = ""
+            else:
+                try:
+                    params = {"q": query, "pageSize": 1, "apiKey": NEWS_API_KEY}
+                    r = requests.get("https://newsapi.org/v2/everything", params=params, timeout=12)
+                    j = r.json()
+                    if j.get("articles"):
+                        art = j["articles"][0]
+                        text = (art.get("title","") or "") + ". " + (art.get("description","") or "") + ". " + (art.get("content","") or "")
+                        st.success("Fetched top article content.")
+                    else:
+                        st.warning("No articles found.")
+                        text = ""
+                except Exception as e:
+                    st.error(f"News fetch failed: {e}")
+                    text = ""
+    return input_type, locals().get("text", None)
+
+def show_record_json(record):
+    st.markdown("**Result (JSON)**")
+    st.json(record)
+
+# ---------- PAGE: Home ----------
 if page == "Home":
-    st.title("🏠 AI Narrative Nexus")
+    st.header("About AI Narrative Nexus")
     st.markdown("""
-    **AI Narrative Nexus** transforms unstructured text into actionable insights through:
-    - 🧩 **Topic Modeling** (LDA / NMF)
-    - ❤️ **Sentiment Analysis** (Random Forest / LSTM)
-    - 🧠 **Text Summarization** (Abstractive / Extractive)
-    - 📊 **Data Visualization & Evaluation Dashboards**
+    **AI Narrative Nexus** converts unstructured text to insights using:
+    - Topic Modeling (LDA / NMF)
+    - Sentiment Analysis (Random Forest / LSTM)
+    - Text Summarization (Abstractive / Extractive / Textrank)
+    - Visualizations & Evaluation (confusion matrices, EDA plots)
 
-    ---
-    ### 🚀 Project Overview
-    This project integrates multiple NLP techniques for real-world data analysis using:
-    - **Python**, **Streamlit**, **Transformers**, **NLTK**, **Matplotlib**, **Seaborn**
-    - Modular architecture with separate pipelines for topic detection, sentiment prediction, and summarization.
+    **Project structure (expected)**:
+    - `models/` — pre-trained models (pkl / h5)
+    - `datasets/` — datasets used for model training (CSV or folder)
+    - `data/` — runtime data store for predictions
+
+    **How to use**
+    - Choose a page on the left
+    - Pick model, paste text / URL / fetch via News API
+    - Run and inspect results — predictions are saved to `data/data_store.json`
+
+    > Tip: If a model is missing, add the trained model files to `models/` with the names used in the app.
     """)
+    st.info("Model availability:\n\nTopic models: " + ", ".join(topic_models.keys() or ["(none)"]))
+    st.info("Sentiment models: " + ", ".join(sentiment_models.keys() or ["(none)"]))
+    st.info("Summarizers: " + ", ".join([k for k in summarizer_models.keys() if not k.endswith('_error')] or ["(none)"]))
 
-# -------------------------------------------------------------
-# TOPIC MODELING
-# -------------------------------------------------------------
+# ---------- PAGE: Topic Modeling ----------
 elif page == "Topic Modeling":
-    st.title("🧩 Topic Modeling")
-    model_choice = st.selectbox("Select Model", ["LDA", "NMF"])
-    input_type = st.radio("Select Input Type", ["Free Text", "Reddit URL", "News API"])
+    st.header("🧩 Topic Modeling")
+    st.markdown("Choose a topic model and input source. The app will show a predicted topic (top words) and save the result.")
 
-    text = st.text_area("Enter text or link here:")
+    model_choice = st.selectbox("Select Topic Model", ["none", "LDA", "NMF"], index=0 if not topic_models else (1 if "LDA" in topic_models else 0))
+    input_type, text = input_source_widget(prefix="topic_")
+
     if st.button("Run Topic Modeling"):
-        st.success(f"✅ Topic Modeling ({model_choice}) executed successfully!")
-        st.write({
-            "model": model_choice,
-            "input": input_type,
-            "topic_prediction": "Sample Topic 12 — Religion & Culture",
-            "timestamp": datetime.now(timezone.utc).isoformat()
-        })
+        if model_choice == "none":
+            st.error("Select a topic model first.")
+        else:
+            if not text:
+                st.warning("No text available to analyze.")
+            else:
+                with st.spinner("Predicting topic..."):
+                    pred, err = predict_topic_single(text, model_choice)
+                if err:
+                    st.error(f"Topic prediction error: {err}")
+                else:
+                    st.success(f"Topic predicted: {pred}")
+                record = {
+                    "id": str(uuid.uuid4()),
+                    "source": input_type,
+                    "model": model_choice,
+                    "input": text,
+                    "topic_prediction": pred,
+                    "timestamp": datetime.now(timezone.utc).isoformat()
+                }
+                save_to_store([record])
+                show_record_json(record)
 
-# -------------------------------------------------------------
-# SENTIMENT ANALYSIS
-# -------------------------------------------------------------
+# ---------- PAGE: Sentiment Analysis ----------
 elif page == "Sentiment Analysis":
-    st.title("❤️ Sentiment Analysis")
-    model_choice = st.selectbox("Select Model", ["Random Forest", "LSTM"])
-    input_type = st.radio("Select Input Type", ["Free Text", "Reddit URL", "News API"])
+    st.header("😊 Sentiment Analysis")
+    st.markdown("Choose a sentiment model (Random Forest or LSTM) and provide input.")
 
-    text = st.text_area("Enter review, tweet, or paragraph:")
+    sent_choice = st.selectbox("Select Sentiment Model", ["none"] + list(sentiment_models.keys()))
+    input_type, text = input_source_widget(prefix="sent_")
+
     if st.button("Run Sentiment Analysis"):
-        st.success(f"✅ Sentiment Analysis ({model_choice}) complete!")
-        st.write({
-            "model": model_choice,
-            "sentiment": "Positive",
-            "confidence": "0.94",
-            "timestamp": datetime.now(timezone.utc).isoformat()
-        })
+        if sent_choice == "none":
+            st.error("Choose a sentiment model.")
+        else:
+            if not text:
+                st.warning("No text available.")
+            else:
+                with st.spinner("Running sentiment model..."):
+                    pred, err = predict_sentiment_single(text, sent_choice)
+                if err:
+                    st.error(f"Error: {err}")
+                else:
+                    if pred == "positive":
+                        st.success("Positive 🙂")
+                    elif pred == "negative":
+                        st.error("Negative 🙁")
+                    else:
+                        st.info(str(pred))
+                record = {
+                    "id": str(uuid.uuid4()),
+                    "source": input_type,
+                    "model": sent_choice,
+                    "input": text,
+                    "predicted_sentiment": pred,
+                    "timestamp": datetime.now(timezone.utc).isoformat()
+                }
+                save_to_store([record])
+                show_record_json(record)
 
-# -------------------------------------------------------------
-# TEXT SUMMARIZATION
-# -------------------------------------------------------------
+# ---------- PAGE: Text Summarization ----------
 elif page == "Text Summarization":
-    st.title("🧠 Text Summarization")
-    model_choice = st.selectbox("Select Summarization Type", ["Abstractive", "Extractive"])
-    input_type = st.radio("Select Input Type", ["Free Text", "Reddit URL", "News API"])
-    text = st.text_area("Paste the text/article to summarize:")
+    st.header("✂️ Text Summarization")
+    st.markdown("Select summarizer and input text (or fetch from News/Reddit).")
+
+    summarizer_choice = st.selectbox("Summarizer", ["simple_textrank", "Abstractive", "Extractive"])
+    input_type, text = input_source_widget(prefix="summ_")
 
     if st.button("Generate Summary"):
-        st.success(f"✅ Summary generated using {model_choice} model!")
-        summary = "This is a demonstration summary of your input text showing key ideas concisely."
-        st.markdown(f"### ✨ Summary:\n> {summary}")
+        if not text:
+            st.warning("No text provided.")
+        else:
+            with st.spinner("Generating summary..."):
+                summary = summarize_text(text, summarizer_choice)
+            if summary:
+                st.success(f"Summary generated using {summarizer_choice}!")
+                st.markdown("### ✨ Summary:")
+                st.write(summary)
+            else:
+                st.error("Could not generate summary with selected model. Falling back to TextRank.")
+                fallback = simple_summarize(text)
+                st.write(fallback)
 
-# -------------------------------------------------------------
-# DATA VISUALIZATION (EDA)
-# -------------------------------------------------------------
+            record = {
+                "id": str(uuid.uuid4()),
+                "source": input_type,
+                "model": summarizer_choice,
+                "input": text,
+                "summary": summary or fallback,
+                "timestamp": datetime.now(timezone.utc).isoformat()
+            }
+            save_to_store([record])
+            st.expander("View saved record (json)").json(record)
+
+# ---------- PAGE: Data Visualization ----------
 elif page == "Data Visualization":
     st.title("📊 Data Visualization (EDA)")
     model_area = st.selectbox("Choose area", ["Topic Modeling", "Sentiment Analysis", "Text Summarization"])
@@ -210,46 +537,46 @@ elif page == "Data Visualization":
         st.pyplot(fig)
         st.line_chart(data)
 
-# -------------------------------------------------------------
-# EVALUATION & ANALYSIS
-# -------------------------------------------------------------
+
+# ---------- PAGE: Evaluation & Analysis ----------
 elif page == "Evaluation & Analysis":
-    st.title("📈 Evaluation & Analysis")
-    st.markdown("View confusion matrices and performance metrics for each model.")
-    model_type = st.selectbox("Select Model Type", ["Topic Modeling", "Sentiment Analysis", "Text Summarization"])
-
-    for model_name, path in CONFUSION_MATRICES[model_type]:
+    st.header("📈 Evaluation & Analysis")
+    st.markdown("View confusion matrices and evaluation artifacts for each model if available.")
+    # list available images from EVAL_IMAGES
+    for key, path in EVAL_IMAGES.items():
+        st.markdown(f"**{key.upper()}**")
         if os.path.exists(path):
-            st.image(path, caption=f"{model_name} - Confusion Matrix", use_container_width=True)
+            st.image(path, caption=os.path.basename(path), use_column_width=True)
         else:
-            st.warning(f"⚠️ Confusion matrix not found for: {path}")
+            st.warning(f"Confusion matrix / image not found for: {os.path.basename(path)}")
 
-# -------------------------------------------------------------
-# LIVE DEMO
-# -------------------------------------------------------------
+    # show a summary of saved predictions
+    st.subheader("Saved predictions (data store)")
+    records = load_json_store()
+    if records:
+        df = pd.json_normalize(records)
+        st.dataframe(df.tail(100))
+        st.download_button("Download predictions CSV", DATA_STORE_CSV, file_name="data_store.csv")
+    else:
+        st.info("No saved predictions yet (run the analyzers to generate).")
+
+# ---------- PAGE: Live Demo (blank / placeholder) ----------
 elif page == "Live Demo":
-    st.title("🧪 Live Demo")
-    st.info("Live demo functionality coming soon!")
+    st.header("Live Demo")
+    st.info("This page is reserved for live demonstrations. (Blank placeholder).")
 
-# -------------------------------------------------------------
-# ABOUT PAGE
-# -------------------------------------------------------------
+# ---------- PAGE: About ----------
 elif page == "About":
-    st.title("ℹ️ About AI Narrative Nexus")
+    st.header("About & Team")
     st.markdown("""
-    **AI Narrative Nexus** converts unstructured text into meaningful insights using:
-    - Topic Modeling (LDA/NMF)
-    - Sentiment Analysis (Random Forest/LSTM)
-    - Text Summarization (Abstractive/Extractive)
-    - Interactive Visualizations
+    **AI Narrative Nexus** — Project for Infosys Internship (demo).
+    - Team: Your name(s)
+    - Contact: (add your email)
+    - Description: A web app to perform topic modelling, sentiment analysis, and text summarization and visualize results.
 
-    **Tech Stack:**
-    - 🐍 Python
-    - 🤗 Transformers
-    - 📊 Matplotlib / Seaborn
-    - 💡 Streamlit
-
-    **Team:** Monika Killamsetti & Team  
-    **Project:** Infosys Internship 2025  
-    **Report:** `AI_Narrative_Nexus.pdf`
+    Replace the placeholder models under `models/` with your trained models to enable full functionality.
     """)
+    st.markdown("**Project files**")
+    st.write(sorted(os.listdir(".")))
+
+# ---------- END ----------

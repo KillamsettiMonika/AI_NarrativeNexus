@@ -8,5 +8,37 @@
     "predicted_topic": 16,
     "predicted_sentiment": "positive",
     "summary": "This moisturizer absorbs quickly without leaving a greasy layer, which is great for everyday use. The fragrance is mild and pleasant. The only drawback is the price—it's slightly on the higher side. Still, it’s worth it for the results. For more information on this moisturizer, go to www.glossier.com."
+  },
+  {
+    "id": "5251a12f-09e5-405c-b1dd-b3737124a08c",
+    "source": "Free Text",
+    "model": "LDA",
+    "input": "Graphics are visual images or designs created to communicate information, illustrate concepts, or enhance visual appeal. This can include hand-drawn or computer-generated images, like photographs, illustrations, charts, and diagrams used in everything from user interfaces and gaming to marketing and art. \n",
+    "topic_prediction": "Topic 6 — window, file, card, problem, use, disk",
+    "timestamp": "2025-10-31T11:51:46.959903+00:00"
+  },
+  {
+    "id": "57c27378-ce0c-46f0-8465-5285bc3d5c52",
+    "source": "Free Text",
+    "model": "NMF",
+    "input": "Graphics are visual images or designs created to communicate information, illustrate concepts, or enhance visual appeal. This can include hand-drawn or computer-generated images, like photographs, illustrations, charts, and diagrams used in everything from user interfaces and gaming to marketing and art. \n",
+    "topic_prediction": "Topic 17 — motif, use, code, program, widget, like",
+    "timestamp": "2025-10-31T11:52:00.795620+00:00"
+  },
+  {
+    "id": "0a5958d1-4d33-4c5b-9f26-e43d3328f5d6",
+    "source": "Free Text",
+    "model": "Abstractive",
+    "input": "General and artistic graphics\nDefinition: A visual representation of data or a design on a surface, which can be physical (like a wall or paper) or digital (like a computer screen).\nPurpose: To inform, illustrate, entertain, or decorate.\nExamples: Drawings, photographs, illustrations, maps, and diagrams. \nComputer graphics\nDefinition: Graphics created, stored, or displayed on a computer.\nTypes:\nBitmap graphics: Composed of a grid of pixels.\nVector graphics: Defined by mathematical equations, allowing them to be scaled without losing quality.\nApplications: User interfaces, digital art, web design, and video games.\nHardware: A graphics processing unit (GPU) is a specialized electronic circuit that handles graphics rendering. ",
+    "summary": "Computer graphics is a visual representation of data or a design on a surface. It can be physical (like a wall or paper) or digital ( like a computer screen)",
+    "timestamp": "2025-10-31T11:53:12.326182+00:00"
+  },
+  {
+    "id": "ac8edf21-5c02-47d6-ac11-0a1b7f2f0483",
+    "source": "Free Text",
+    "model": "LDA",
+    "input": "A church can be a building used for Christian worship, or a Christian organization or community of believers. Churches serve as places for religious services, community gatherings, and events like weddings and funerals. The term can also refer to public worship or a specific denomination within Christianity. ",
+    "topic_prediction": "Topic 12 — god, people, jesus, say, christian, life",
+    "timestamp": "2025-11-01T11:35:37.197924+00:00"
   }
 ]

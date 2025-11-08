@@ -688,9 +688,66 @@ elif page == "Evaluation & Analysis":
         st.info("No saved predictions yet — run Topic, Sentiment, or Summarization models first.")
 
 # ---------- PAGE: Live Demo (blank / placeholder) ----------
+# ---------- PAGE: Live Demo ----------
 elif page == "Live Demo":
-    st.header("Live Demo")
-    st.info("This page is reserved for live demonstrations. (Blank placeholder).")
+    st.header("⚡ Live End-to-End Text Analysis Demo")
+
+    st.markdown("""
+    Upload your document below.  
+    This demo will:
+    - Predict **Topic** using **LDA**
+    - Predict **Sentiment** using **Random Forest** or **LSTM**
+    - (Optional) Generate **Abstractive Summary**
+    """)
+
+    uploaded = st.file_uploader("Upload a Document (txt / pdf / doc / docx)", type=["txt", "pdf", "doc", "docx"])
+
+    sentiment_choice = st.selectbox("Choose Sentiment Model", ["RF", "LSTM"])
+
+    want_summary = st.checkbox("Generate Abstractive Summary")
+
+    if st.button("Analyze"):
+        if uploaded is None:
+            st.error("Please upload a document first.")
+        else:
+            with st.spinner("Reading document..."):
+                text = safe_read_uploaded(uploaded)
+
+            if not text or len(text.strip()) < 20:
+                st.error("Document text could not be extracted or is too short.")
+            else:
+                st.success("Document loaded successfully!")
+
+                # ---- Topic Prediction (LDA) ----
+                st.subheader("🧩 Topic Prediction (LDA)")
+                pred_topic, err = predict_topic_single(text, "LDA")
+                if err:
+                    st.error("Topic Model Error: " + err)
+                else:
+                    st.write(f"**Predicted Topic:** {pred_topic}")
+
+                # ---- Sentiment Prediction ----
+                st.subheader("😊 Sentiment Prediction")
+                pred_sent, err = predict_sentiment_single(text, sentiment_choice)
+                if err:
+                    st.error("Sentiment Model Error: " + err)
+                else:
+                    if str(pred_sent).lower() == "positive":
+                        st.success(f"Sentiment: **Positive** 🙂")
+                    else:
+                        st.error(f"Sentiment: **Negative** 🙁")
+
+                # ---- Optional Summary ----
+                if want_summary:
+                    st.subheader("📝 Abstractive Summary")
+                    with st.spinner("Generating Summary..."):
+                        summary = summarize_text(text, "Abstractive")
+                    if summary:
+                        st.write(summary)
+                    else:
+                        st.warning("Abstractive summarizer failed. Using fallback.")
+                        st.write(simple_summarize(text))
+
 
 # ---------- PAGE: About ----------
 elif page == "About":
